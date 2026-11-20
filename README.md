@@ -2,9 +2,12 @@
 
 A minimal [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) plugin:
 **at Desktop startup, it launches `dsh web` — exactly the command you would type
-by hand — and records the authenticated URL that command prints.**
+by hand — and records the authenticated URL that command prints.** It ships a
+settings page for the port and for an experimental switch that makes the Web GUI
+run over the Desktop profile.
 
-One file of logic (`index.js`, ~130 lines), zero dependencies, zero build step.
+One host file (`index.js`), one browser file (`client.js`), zero dependencies,
+zero build step.
 
 ```
 Desktop app starts
@@ -14,7 +17,7 @@ Desktop app starts
         │ yes
         ▼
   spawn ── DeepSeek Harness.exe --expose-internals …/dsh-desktop-host/lib/cli.js web --port 0
-        │
+        │                                   (or: --profile desktop-shared --patch …)
         ▼
   child prints  "dsh web: http://127.0.0.1:64961/?token=…"
         │
@@ -61,6 +64,7 @@ inserts one row into the profile:
       config:
         openBrowser: true
         port: 0
+        sharedProfile: false
 ```
 
 ### 1. Detect the Desktop side
@@ -88,8 +92,11 @@ sees that marker. Belt and braces on top of step 1.
 ### 3. Spawn exactly what `dsh web` does
 
 ```js
-const args = ['--expose-internals', desktopCliPath(), 'web', '--port', String(config.port ?? 0)]
-if (config.openBrowser === false) args.push('--no-open')
+const args = ['--expose-internals', desktopCliPath()]
+if (shared) args.push('--profile', SHARED_PROFILE, '--patch', sharedPatch)
+else args.push('web')
+args.push('--port', String(port))
+if (openBrowser === false) args.push('--no-open')
 spawn(process.execPath, args, {
   cwd: profile.cwd,
   windowsHide: true,
@@ -143,11 +150,8 @@ running server nobody can reach.
 ### 6. One server per process — not per plugin load
 
 ```js
-const OWNED = Symbol.for('dsh-desktop-autoweb.owned')
-if (globalThis[OWNED] !== undefined) return
-…
-globalThis[OWNED] = child
-process.once('exit', () => child.kill())
+const RUNTIME = Symbol.for('dsh-desktop-autoweb.runtime')
+const state = globalThis[RUNTIME] ?? (globalThis[RUNTIME] = { child: undefined, … })
 ```
 
 State lives on `globalThis`, not on a module variable, because Cordis disposes
@@ -158,6 +162,125 @@ and re-evaluates the module on every HMR reload. A web server's lifetime is the
 
 At startup the plugin deletes any leftover `desktop-autoweb.url`, so a URL from
 a previous run never points at a server that no longer exists.
+
+### 8. React to settings without a restart
+
+`port` and `sharedProfile` are declared `.volatile()`, so a settings edit
+commits into the running references and the Loader emits
+`loader/volatile-update` instead of restarting the plugin:
+
+```js
+ctx.on('loader/volatile-update', () => {
+  if (port === state.port && shared === state.shared) return
+  stopServer(state)
+  startServer(state, config)
+})
+```
+
+`openBrowser` stays an ordinary field: changing it is meant to restart the row.
+Because one process can only serve one profile, flipping `sharedProfile` **must**
+replace the child — there is no in-place migration.
+
+### 9. Reap a child left by an older release
+
+HMR swaps the module but runs no disposer for a plain `apply`, so a file
+upgraded while the app is running inherits the process without the old child's
+handle — and that orphan still holds its port. `apply` therefore looks for the
+key the previous release used and kills what it finds:
+
+```js
+const LEGACY_OWNED = Symbol.for('dsh-desktop-autoweb.owned')
+function reapLegacyChild() {
+  const legacy = globalThis[LEGACY_OWNED]
+  if (legacy === undefined) return
+  delete globalThis[LEGACY_OWNED]
+  try { if (legacy.exitCode === null && legacy.signalCode === null) legacy.kill() } catch {}
+}
+```
+
+---
+
+## Settings page
+
+`client.js` registers one `settings.section` entry (nav id `dsh-desktop-autoweb`,
+order `120`). It reads and writes the plugin's own Config through the host's
+`configForms` service, addressed by the Loader **entry id** (`desktop-autoweb`),
+which is what DSH calls a settings namespace — not the package name.
+
+```
+settings.section  ── Account
+                  ── General
+                     …
+                  ── Desktop Auto-Web      ← this page
+                       Web build port   [ 0 ]  Save
+                       ──────────────────────
+                       Share Desktop plugins and configuration  [ off ]
+                       实验性功能
+                       尽管绝大多数插件都是 Web/Desktop 全兼容，但谁都无法保证某个
+                       插件是 Desktop-only(例如 dsh-wallpaper-engine)，所以请三思而后行
+```
+
+Both halves must agree on the bare package name: `dsh-client-modules` attaches a
+package's browser half only to the Loader row whose specifier **is** the bare
+package name, which the patch layer already does.
+
+---
+
+## Experimental: share the Desktop profile with the Web build
+
+Turning `sharedProfile` on makes the Web server boot **the Desktop profile** for
+itself, so the page in your browser carries every plugin and every setting the
+Desktop app has. Nothing is copied and nothing is duplicated.
+
+> [!WARNING]
+> 尽管绝大多数插件都是 Web/Desktop 全兼容，但谁都无法保证某个插件是
+> Desktop-only(例如 dsh-wallpaper-engine)，所以请三思而后行
+>
+> While the vast majority of plugins are fully Web/Desktop compatible, nobody can
+> guarantee that a particular plugin is not Desktop-only (for example
+> `dsh-wallpaper-engine`), so think twice before enabling this.
+
+### How it works
+
+`--profile desktop` is rejected outright:
+
+```
+error: profile "desktop" is managed exclusively by the Electron application
+```
+
+So the plugin registers a **second profile name** that resolves to the same
+directory — a directory junction:
+
+```
+$DSH_HOME/profiles/desktop-shared  ──junction──▶  $DSH_HOME/profiles/desktop
+```
+
+and boots that. Only the junction's name differs; the bundles, the
+`node_modules` and every plugin row are the Desktop ones.
+
+Two Desktop rows assume the Electron carrier, so the child receives a corrective
+overlay (`$DSH_HOME/desktop-autoweb.shared.yml`) written on every start:
+
+```yaml
+- id: webserver
+  config:
+    host: '127.0.0.1'          # dsh-web-lan-access sets 0.0.0.0, which the server refuses
+    port: !!js ctx.webStartup?.port ?? 3080   # a config override replaces the whole row
+    compression: gzip
+    compressionLevel: 1
+    compressionThresholdBytes: 1024
+- id: connection
+  config:
+    trustedHosts: ['127.0.0.1', 'localhost']  # the Desktop value reads ctx.webRuntime, absent here
+```
+
+Without it the child dies with
+`webserver: host "0.0.0.0" is an unspecified (wildcard) address…` and
+`cannot get property "webRuntime" without inject`.
+
+If the junction cannot be prepared, the plugin logs
+`desktop-autoweb: not sharing the Desktop profile: …` and silently falls back to
+the plain `web` profile — the Desktop app keeps working either way.
 
 ---
 
@@ -217,9 +340,14 @@ dsh plugin --profile desktop add <path-to-this-folder>
 | Key | Default | Meaning |
 | --- | --- | --- |
 | `openBrowser` | `true` | Open the authenticated URL in the default browser, like a hand-run `dsh web`. Set `false` to only record the URL. |
-| `port` | `0` | `0` picks a free port. A number pins one. |
+| `port` | `0` | `0` picks a free port. A number pins one. Editable from the settings page. |
+| `sharedProfile` | `false` | Experimental — boot the Web build over the Desktop profile. Editable from the settings page. |
 
-Edit them in the bundle's `cordis.patch.yml`, or through **Plugins** in the GUI.
+`port` and `sharedProfile` are volatile, so the settings page writes them
+without restarting the plugin; `openBrowser` restarts the row.
+
+Edit them in the bundle's `cordis.patch.yml`, or through **Plugins** or the
+plugin's own settings page in the GUI.
 
 ```yaml
 - insert:
@@ -228,6 +356,7 @@ Edit them in the bundle's `cordis.patch.yml`, or through **Plugins** in the GUI.
       config:
         openBrowser: false
         port: 3080
+        sharedProfile: false
 ```
 
 ---
@@ -253,9 +382,10 @@ the same process.
 
 ```
 dsh-desktop-autoweb/
-├── package.json          # bundle manifest: dsh.bundle.patch, exports, files
+├── package.json          # bundle manifest: dsh.bundle.patch, dsh.client, exports
 ├── cordis.patch.yml      # inserts the `desktop-autoweb` row with its config
-├── index.js              # the whole plugin (~130 lines)
+├── index.js              # host half: spawns the Web build
+├── client.js             # browser half: the settings page
 ├── icon.svg              # ≤256 KiB, listed in `files` and `exports`
 ├── locale/
 │   ├── en.json           # meta.title / meta.description shown in Plugins

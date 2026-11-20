@@ -2,8 +2,9 @@
 
 一个极简的 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) 插件：
 **在桌面端启动时运行一次 `dsh web` —— 就是你手敲的那条命令 —— 并把该命令打印出来的带鉴权 URL 记录下来。**
+此外它还提供一个设置页，可以配置端口，以及一个让 Web 端共享桌面端 Profile 的实验性开关。
 
-逻辑只有一个文件（`index.js`，约 130 行），零依赖、零构建。
+宿主侧一个文件（`index.js`），浏览器侧一个文件（`client.js`），零依赖、零构建。
 
 ```
 桌面端启动
@@ -13,6 +14,7 @@
         │ 是
         ▼
   spawn ── DeepSeek Harness.exe --expose-internals …/dsh-desktop-host/lib/cli.js web --port 0
+        │                                   （或：--profile desktop-shared --patch …）
         │
         ▼
   子进程输出  "dsh web: http://127.0.0.1:64961/?token=…"
@@ -58,6 +60,7 @@ dsh web
       config:
         openBrowser: true
         port: 0
+        sharedProfile: false
 ```
 
 ### 1. 判定是否为桌面端
@@ -83,8 +86,11 @@ disabled: !!js "ctx.get('profileContext')?.name !== 'desktop' || !process.env.DS
 ### 3. 启动与 `dsh web` 完全相同的命令
 
 ```js
-const args = ['--expose-internals', desktopCliPath(), 'web', '--port', String(config.port ?? 0)]
-if (config.openBrowser === false) args.push('--no-open')
+const args = ['--expose-internals', desktopCliPath()]
+if (shared) args.push('--profile', SHARED_PROFILE, '--patch', sharedPatch)
+else args.push('web')
+args.push('--port', String(port))
+if (openBrowser === false) args.push('--no-open')
 spawn(process.execPath, args, {
   cwd: profile.cwd,
   windowsHide: true,
@@ -135,11 +141,8 @@ $DSH_HOME/desktop-autoweb.url
 ### 6. 每个进程一个服务器，而不是每次插件加载一个
 
 ```js
-const OWNED = Symbol.for('dsh-desktop-autoweb.owned')
-if (globalThis[OWNED] !== undefined) return
-…
-globalThis[OWNED] = child
-process.once('exit', () => child.kill())
+const RUNTIME = Symbol.for('dsh-desktop-autoweb.runtime')
+const state = globalThis[RUNTIME] ?? (globalThis[RUNTIME] = { child: undefined, … })
 ```
 
 状态放在 `globalThis` 而不是模块级变量，因为 Cordis 每次 HMR 重载都会销毁并重新求值模块。
@@ -151,6 +154,112 @@ Web 服务器的生命周期是**进程**，所以重载既不能杀掉它，也
 ### 7. 清理过期的 URL
 
 启动时先删掉上一次留下的 `desktop-autoweb.url`，避免文件里的 URL 指向一个已经不存在的服务器。
+
+### 8. 改设置不重启插件
+
+`port` 与 `sharedProfile` 声明为 `.volatile()`，设置页的改动会直接写进运行中的引用，
+Loader 只发出 `loader/volatile-update`，不会重启插件：
+
+```js
+ctx.on('loader/volatile-update', () => {
+  if (port === state.port && shared === state.shared) return
+  stopServer(state)
+  startServer(state, config)
+})
+```
+
+`openBrowser` 是普通字段，改它就是要重启这一行。由于一个进程只能服务一个 profile，
+切换 `sharedProfile` **必须**换掉子进程 —— 没有原地迁移这回事。
+
+### 9. 回收旧版本留下的子进程
+
+HMR 会替换模块，但对普通的 `apply` 不会调用 disposer；于是应用运行期间升级的文件，
+继承了进程却拿不到旧子进程的句柄 —— 那个孤儿还占着端口。因此 `apply` 会先去查上一个版本
+用过的键，把找到的进程杀掉：
+
+```js
+const LEGACY_OWNED = Symbol.for('dsh-desktop-autoweb.owned')
+function reapLegacyChild() {
+  const legacy = globalThis[LEGACY_OWNED]
+  if (legacy === undefined) return
+  delete globalThis[LEGACY_OWNED]
+  try { if (legacy.exitCode === null && legacy.signalCode === null) legacy.kill() } catch {}
+}
+```
+
+---
+
+## 设置页
+
+`client.js` 注册一个 `settings.section` 条目（导航 id 为 `dsh-desktop-autoweb`，`order` 为 `120`）。
+它通过宿主的 `configForms` 服务读写本插件自己的 Config，寻址用的是 Loader **条目 id**
+（`desktop-autoweb`）—— 也就是 DSH 说的设置命名空间，不是包名。
+
+```
+settings.section  ── 账户
+                  ── 通用
+                     …
+                  ── 桌面端自动启动网页版      ← 本页
+                       网页版端口   [ 0 ]  保存
+                       ──────────────────────
+                       让网页版共享桌面端的插件和配置    [ 关 ]
+                       实验性功能
+                       尽管绝大多数插件都是 Web/Desktop 全兼容，但谁都无法保证某个
+                       插件是 Desktop-only(例如 dsh-wallpaper-engine)，所以请三思而后行
+```
+
+两侧必须以裸包名对齐：`dsh-client-modules` 只会把包的浏览器半侧挂到说明符**就是**裸包名的那一行上，
+而 patch 层插的正是这一行。
+
+---
+
+## 实验性功能：让 Web 端共享桌面端 Profile
+
+打开 `sharedProfile` 后，Web 服务器会为它自己启动**桌面端 Profile**，
+于是浏览器里的页面带着桌面端所有的插件与设置。不复制、不迁移。
+
+> [!WARNING]
+> 尽管绝大多数插件都是 Web/Desktop 全兼容，但谁都无法保证某个插件是
+> Desktop-only(例如 dsh-wallpaper-engine)，所以请三思而后行
+
+### 原理
+
+`--profile desktop` 会被直接拒绝：
+
+```
+error: profile "desktop" is managed exclusively by the Electron application
+```
+
+于是插件注册了**第二个 profile 名**，指向同一个目录 —— 一个目录联接（junction）：
+
+```
+$DSH_HOME/profiles/desktop-shared  ──junction──▶  $DSH_HOME/profiles/desktop
+```
+
+再用它启动。只有联接的名字不同；bundle 列表、`node_modules`、每一个插件行都是桌面端的那一份。
+
+桌面端有两行假定自己被 Electron 宿主托着，所以子进程会收到一份每次启动都重写的修正 overlay
+（`$DSH_HOME/desktop-autoweb.shared.yml`）：
+
+```yaml
+- id: webserver
+  config:
+    host: '127.0.0.1'          # dsh-web-lan-access 会写 0.0.0.0，服务器直接拒绝
+    port: !!js ctx.webStartup?.port ?? 3080   # 覆盖 config 会替换整行，必须补全
+    compression: gzip
+    compressionLevel: 1
+    compressionThresholdBytes: 1024
+- id: connection
+  config:
+    trustedHosts: ['127.0.0.1', 'localhost']  # 桌面端的值读 ctx.webRuntime，这里没有
+```
+
+没有它，子进程会以
+`webserver: host "0.0.0.0" is an unspecified (wildcard) address…` 和
+`cannot get property "webRuntime" without inject` 失败。
+
+如果联接准备失败，插件会打印 `desktop-autoweb: not sharing the Desktop profile: …`
+并静默退回普通 `web` profile —— 两种情况下桌面端本身都照常工作。
 
 ---
 
@@ -205,9 +314,12 @@ dsh plugin --profile desktop add <本目录路径>
 | 键 | 默认值 | 含义 |
 | --- | --- | --- |
 | `openBrowser` | `true` | 用默认浏览器打开带鉴权的 URL，与手敲 `dsh web` 一致。设 `false` 则只记录 URL。 |
-| `port` | `0` | `0` 表示自动选空闲端口；写数字则固定端口。 |
+| `port` | `0` | `0` 表示自动选空闲端口；写数字则固定端口。可在设置页修改。 |
+| `sharedProfile` | `false` | 实验性 —— 让 Web 端启动在桌面端 Profile 上。可在设置页修改。 |
 
-在本 bundle 的 `cordis.patch.yml` 里改，或通过 GUI 的 **插件** 页改。
+`port` 与 `sharedProfile` 是 volatile 字段，设置页写入时不会重启插件；`openBrowser` 会重启该行。
+
+在本 bundle 的 `cordis.patch.yml` 里改，或通过 GUI 的 **插件** 页、以及插件自己的设置页改。
 
 ```yaml
 - insert:
@@ -216,6 +328,7 @@ dsh plugin --profile desktop add <本目录路径>
       config:
         openBrowser: false
         port: 3080
+        sharedProfile: false
 ```
 
 ---
@@ -239,9 +352,10 @@ dsh plugin --profile desktop add <本目录路径>
 
 ```
 dsh-desktop-autoweb/
-├── package.json          # bundle 清单：dsh.bundle.patch、exports、files
+├── package.json          # bundle 清单：dsh.bundle.patch、dsh.client、exports、files
 ├── cordis.patch.yml      # 插入 `desktop-autoweb` 行及其配置
-├── index.js              # 插件全部逻辑（约 130 行）
+├── index.js              # 宿主侧：启动 Web 构建
+├── client.js             # 浏览器侧：设置页
 ├── icon.svg              # ≤256 KiB，已在 files 与 exports 中声明
 ├── locale/
 │   ├── en.json           # 插件页显示的 meta.title / meta.description

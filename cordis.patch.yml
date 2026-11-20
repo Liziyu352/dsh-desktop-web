@@ -7,3 +7,6 @@
         openBrowser: true
         # 0 picks a free port; set a number to pin one.
         port: 0
+        # Experimental: boot the Web build over the Desktop profile so it
+        # carries every plugin and setting installed for Desktop.
+        sharedProfile: false
