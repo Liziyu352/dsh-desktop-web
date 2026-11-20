@@ -1,0 +1,9 @@
+# Inserts the desktop-autoweb row into every profile that lists this bundle.
+- insert:
+    - id: desktop-autoweb
+      name: 'dsh-desktop-autoweb'
+      config:
+        # false keeps the browser untouched and only records the URL.
+        openBrowser: true
+        # 0 picks a free port; set a number to pin one.
+        port: 0

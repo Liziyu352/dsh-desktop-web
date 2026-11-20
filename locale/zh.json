@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "桌面端自动启动网页版",
+    "description": "在桌面端启动时运行一次 `dsh web`（即你手动执行的同一条命令），把网页版 DeepSeek Harness 跑起来。当运行中的 profile 为 `desktop` 时，插件以独立进程启动一个 `dsh web`，自动选择空闲本地端口，并把带鉴权 token 的 URL 写入 `$DSH_HOME/desktop-autoweb.url`，同时在日志打印 `desktop-autoweb: web build listening at <url>`。不带 token 访问会返回 401，请使用记录下来的完整 URL。关闭此插件即可停止这个额外的 Web 服务，桌面端窗口本身不受影响。"
+  }
+}

@@ -1,0 +1,7 @@
+node_modules/
+*.log
+.DS_Store
+Thumbs.db
+/.idea/
+# Local scratch used while testing the plugin
+desktop-autoweb.url

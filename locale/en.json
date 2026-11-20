@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "Desktop Auto-Web",
+    "description": "Runs `dsh web` once at Desktop startup — the same command you would run by hand — so the DeepSeek Harness Web build comes up alongside the Desktop window. When the running profile is `desktop`, one `dsh web` process starts on a free local port, and the authenticated URL it prints is recorded at `$DSH_HOME/desktop-autoweb.url` and logged as `desktop-autoweb: web build listening at <url>`. A URL without its token answers 401, so use the recorded URL. Turning the bundle off stops the extra Web server; the Desktop window itself is unaffected."
+  }
+}
