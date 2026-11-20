@@ -15,9 +15,9 @@
 
 import { spawn } from 'node:child_process'
 import { mkdirSync, readlinkSync, rmSync, rmdirSync, symlinkSync, writeFileSync } from 'node:fs'
+import { createRequire } from 'node:module'
 import { homedir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
-import z from '@deepseek-ai/schemastery'
 
 /** Stable Cordis plugin name. */
 export const name = 'desktop-autoweb'
@@ -26,11 +26,59 @@ export const name = 'desktop-autoweb'
 export const inject = ['profileContext']
 
 /**
+ * The package directory the running installation keeps its own modules in.
+ *
+ * This bundle is installed as a `link:`, so Node resolves its real path to a
+ * checkout outside the profile and no `node_modules` sits above that path. The
+ * installation is therefore the only anchor a shared package may come from —
+ * which is also why this bundle declares no `dependencies` for anything the
+ * installation already ships.
+ * @returns the `@deepseek-ai/dsh` package directory.
+ */
+function installAnchor() {
+	const installDir = process.env.DSH_INSTALL_DIR
+	if (installDir !== undefined && installDir !== '') return installDir
+	return join(dirname(process.execPath), 'resources', 'app.asar', 'dsh', 'node_modules', '@deepseek-ai', 'dsh')
+}
+
+/**
+ * Load the schema builder from the installation.
+ *
+ * A bare `import … from '@deepseek-ai/schemastery'` fails here: Node normalizes
+ * a linked plugin to its real path and then walks up from the checkout, which
+ * has no `node_modules` at any level. Resolving through the installation anchor
+ * reaches the copy the loader itself validates against, so the volatile fields
+ * stay ordinary schemastery fields.
+ *
+ * A missing schema is not fatal — Cordis skips validation entirely when a plugin
+ * exports no `Config` — but the settings page derives its form from that schema,
+ * so the absence is reported instead of hidden.
+ * @returns the schemastery default export, or `undefined`.
+ */
+function loadSchemastery() {
+	try {
+		const resolveFrom = createRequire(join(installAnchor(), 'package.json'))
+		const loaded = resolveFrom('@deepseek-ai/schemastery')
+		const schema = typeof loaded === 'function' ? loaded : loaded?.default
+		if (schema === undefined) throw new Error('the module exports no schema builder')
+		return schema
+	} catch (error) {
+		console.error(`desktop-autoweb: settings unavailable, ${error.message}`)
+		return undefined
+	}
+}
+
+const z = loadSchemastery()
+
+/**
  * Editable fields. Only `.volatile()` fields reach the settings form, and a
  * volatile edit is committed into the running plugin without a restart — so
  * `apply` reads them through `.get()` and re-reads them on every change.
+ *
+ * `undefined` when the installation could not supply a schema builder: the
+ * plugin still starts and still serves, it just has no settings page.
  */
-export const Config = z.object({
+export const Config = z === undefined ? undefined : z.object({
 	/** Preferred port for the Web build; `0` lets the operating system choose. */
 	port: z.number().step(1).min(0).max(65535).default(0).volatile(),
 	/** Boot the Web build over the Desktop profile instead of the `web` one. */
@@ -113,11 +161,7 @@ function field(config, key) {
  * @returns the CLI script path.
  */
 function desktopCliPath() {
-	const installDir = process.env.DSH_INSTALL_DIR
-	const anchor = installDir === undefined || installDir === ''
-		? join(dirname(process.execPath), 'resources', 'app.asar', 'dsh', 'node_modules', '@deepseek-ai', 'dsh')
-		: installDir
-	return join(anchor, '..', 'dsh-desktop-host', 'lib', 'cli.js')
+	return join(installAnchor(), '..', 'dsh-desktop-host', 'lib', 'cli.js')
 }
 
 /**
