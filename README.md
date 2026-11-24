@@ -1,4 +1,4 @@
-# dsh-desktop-autoweb
+# dsh-desktop-web
 
 A minimal [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) plugin:
 **at Desktop startup, it launches `dsh web` — exactly the command you would type
@@ -60,7 +60,7 @@ inserts one row into the profile:
 # cordis.patch.yml
 - insert:
     - id: desktop-autoweb
-      name: 'dsh-desktop-autoweb'
+      name: 'dsh-desktop-web'
       config:
         openBrowser: true
         port: 0
@@ -150,7 +150,7 @@ running server nobody can reach.
 ### 6. One server per process — not per plugin load
 
 ```js
-const RUNTIME = Symbol.for('dsh-desktop-autoweb.runtime')
+const RUNTIME = Symbol.for('dsh-desktop-web.runtime')
 const state = globalThis[RUNTIME] ?? (globalThis[RUNTIME] = { child: undefined, … })
 ```
 
@@ -189,7 +189,7 @@ handle — and that orphan still holds its port. `apply` therefore looks for the
 key the previous release used and kills what it finds:
 
 ```js
-const LEGACY_OWNED = Symbol.for('dsh-desktop-autoweb.owned')
+const LEGACY_OWNED = Symbol.for('dsh-desktop-web.owned')
 function reapLegacyChild() {
   const legacy = globalThis[LEGACY_OWNED]
   if (legacy === undefined) return
@@ -202,7 +202,7 @@ function reapLegacyChild() {
 
 ## Settings page
 
-`client.js` registers one `settings.section` entry (nav id `dsh-desktop-autoweb`,
+`client.js` registers one `settings.section` entry (nav id `dsh-desktop-web`,
 order `120`). It reads and writes the plugin's own Config through the host's
 `configForms` service, addressed by the Loader **entry id** (`desktop-autoweb`),
 which is what DSH calls a settings namespace — not the package name.
@@ -352,7 +352,7 @@ plugin's own settings page in the GUI.
 ```yaml
 - insert:
     - id: desktop-autoweb
-      name: 'dsh-desktop-autoweb'
+      name: 'dsh-desktop-web'
       config:
         openBrowser: false
         port: 3080
@@ -381,7 +381,7 @@ the same process.
 ## Repository layout
 
 ```
-dsh-desktop-autoweb/
+dsh-desktop-web/
 ├── package.json          # bundle manifest: dsh.bundle.patch, dsh.client, exports
 ├── cordis.patch.yml      # inserts the `desktop-autoweb` row with its config
 ├── index.js              # host half: spawns the Web build

@@ -1,4 +1,4 @@
-# dsh-desktop-autoweb
+# dsh-desktop-web
 
 一个极简的 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) 插件：
 **在桌面端启动时运行一次 `dsh web` —— 就是你手敲的那条命令 —— 并把该命令打印出来的带鉴权 URL 记录下来。**
@@ -56,7 +56,7 @@ dsh web
 # cordis.patch.yml
 - insert:
     - id: desktop-autoweb
-      name: 'dsh-desktop-autoweb'
+      name: 'dsh-desktop-web'
       config:
         openBrowser: true
         port: 0
@@ -141,7 +141,7 @@ $DSH_HOME/desktop-autoweb.url
 ### 6. 每个进程一个服务器，而不是每次插件加载一个
 
 ```js
-const RUNTIME = Symbol.for('dsh-desktop-autoweb.runtime')
+const RUNTIME = Symbol.for('dsh-desktop-web.runtime')
 const state = globalThis[RUNTIME] ?? (globalThis[RUNTIME] = { child: undefined, … })
 ```
 
@@ -178,7 +178,7 @@ HMR 会替换模块，但对普通的 `apply` 不会调用 disposer；于是应�
 用过的键，把找到的进程杀掉：
 
 ```js
-const LEGACY_OWNED = Symbol.for('dsh-desktop-autoweb.owned')
+const LEGACY_OWNED = Symbol.for('dsh-desktop-web.owned')
 function reapLegacyChild() {
   const legacy = globalThis[LEGACY_OWNED]
   if (legacy === undefined) return
@@ -191,7 +191,7 @@ function reapLegacyChild() {
 
 ## 设置页
 
-`client.js` 注册一个 `settings.section` 条目（导航 id 为 `dsh-desktop-autoweb`，`order` 为 `120`）。
+`client.js` 注册一个 `settings.section` 条目（导航 id 为 `dsh-desktop-web`，`order` 为 `120`）。
 它通过宿主的 `configForms` 服务读写本插件自己的 Config，寻址用的是 Loader **条目 id**
 （`desktop-autoweb`）—— 也就是 DSH 说的设置命名空间，不是包名。
 
@@ -324,7 +324,7 @@ dsh plugin --profile desktop add <本目录路径>
 ```yaml
 - insert:
     - id: desktop-autoweb
-      name: 'dsh-desktop-autoweb'
+      name: 'dsh-desktop-web'
       config:
         openBrowser: false
         port: 3080
@@ -351,7 +351,7 @@ dsh plugin --profile desktop add <本目录路径>
 ## 目录结构
 
 ```
-dsh-desktop-autoweb/
+dsh-desktop-web/
 ├── package.json          # bundle 清单：dsh.bundle.patch、dsh.client、exports、files
 ├── cordis.patch.yml      # 插入 `desktop-autoweb` 行及其配置
 ├── index.js              # 宿主侧：启动 Web 构建
