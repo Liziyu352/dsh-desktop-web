@@ -13,7 +13,11 @@
  */
 
 window.__ModuleLoader__.load({
-	id: 'dsh-desktop-web',
+	// The module table keys every client bundle by its package name, so this id
+	// must stay equal to `package.json`'s name: the loader registers the row
+	// under the resolved package name and rejects a bundle that registers
+	// anything else (`loaded without registering "<package>"`).
+	id: '@liziyu352/dsh-desktop-web',
 	factory(require) {
 		const React = require('react')
 		const h = React.createElement
