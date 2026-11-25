@@ -1,7 +1,7 @@
 {
-  "name": "dsh-desktop-autoweb",
+  "name": "@liziyu352/dsh-desktop-web",
   "version": "0.1.0",
-  "private": true,
+  "private": false,
   "type": "module",
   "description": "Starts `dsh web` once at DeepSeek Harness Desktop startup and records the authenticated URL.",
   "keywords": [
@@ -12,13 +12,13 @@
     "desktop",
     "web"
   ],
-  "homepage": "https://github.com/Liziyu352/dsh-desktop-autoweb#readme",
+  "homepage": "https://github.com/Liziyu352/dsh-desktop-web#readme",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/Liziyu352/dsh-desktop-autoweb.git"
+    "url": "git+https://github.com/Liziyu352/dsh-desktop-web.git"
   },
   "bugs": {
-    "url": "https://github.com/Liziyu352/dsh-desktop-autoweb/issues"
+    "url": "https://github.com/Liziyu352/dsh-desktop-web/issues"
   },
   "author": "Liziyu352",
   "license": "MIT",
@@ -36,7 +36,7 @@
     "locale/*.json",
     "icon.svg",
     "README.md",
-    "README-zh-cn.md",
+    "README-en-us.md",
     "LICENSE"
   ],
   "engines": {

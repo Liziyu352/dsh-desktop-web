@@ -1,7 +1,7 @@
 # Inserts the desktop-autoweb row into every profile that lists this bundle.
 - insert:
     - id: desktop-autoweb
-      name: 'dsh-desktop-autoweb'
+      name: '@liziyu352/dsh-desktop-web'
       config:
         # false keeps the browser untouched and only records the URL.
         openBrowser: true

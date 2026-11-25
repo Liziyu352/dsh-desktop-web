@@ -1,5 +1,5 @@
 /**
- * dsh-desktop-autoweb — run `dsh web` once, at Desktop startup.
+ * dsh-desktop-web — run `dsh web` once, at Desktop startup.
  *
  * The Desktop application is itself a Web runtime over the `desktop` profile.
  * This bundle adds one row: when the running profile is `desktop`, it launches
@@ -10,7 +10,7 @@
  * The row stays inert under every other profile — notably `web`, the profile
  * the launched child itself boots — so no spawn chain can form.
  *
- * @module dsh-desktop-autoweb
+ * @module dsh-desktop-web
  */
 
 import { spawn } from 'node:child_process'
@@ -101,17 +101,17 @@ const URL_LINE = /^dsh web: (\S+)$/u
  * plugin-lifetime state: a plugin reload must not restart it, and a reload must
  * not leave the previous server orphaned either.
  */
-const RUNTIME = Symbol.for('dsh-desktop-autoweb.runtime')
+const RUNTIME = Symbol.for('dsh-desktop-web.runtime')
 
 /** Set once the process-exit hook that stops the child has been installed. */
-const HOOKED = Symbol.for('dsh-desktop-autoweb.hooked')
+const HOOKED = Symbol.for('dsh-desktop-web.hooked')
 
 /**
  * Where releases before the settings page kept their child. A module reload
  * swaps in this file without disposing the old one, so the previous version's
  * server would survive as an orphan; `apply` reaps it through this key.
  */
-const LEGACY_OWNED = Symbol.for('dsh-desktop-autoweb.owned')
+const LEGACY_OWNED = Symbol.for('dsh-desktop-web.owned')
 
 /**
  * Profile the Web build boots when it shares the Desktop profile. The CLI
@@ -129,7 +129,7 @@ const SHARED_PATCH_FILE = 'desktop-autoweb.shared.yml'
  * that only exists there. Outside that carrier the Web runtime rejects both, so
  * the overlay rebinds the server to loopback and restates the required fields.
  */
-const SHARED_PATCH = `# Written by dsh-desktop-autoweb — do not edit; it is regenerated on every start.
+const SHARED_PATCH = `# Written by dsh-desktop-web — do not edit; it is regenerated on every start.
 - id: webserver
   config:
     host: '127.0.0.1'

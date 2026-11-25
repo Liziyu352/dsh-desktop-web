@@ -1,5 +1,5 @@
 /**
- * dsh-desktop-autoweb — the browser half.
+ * dsh-desktop-web — the browser half.
  *
  * One settings page: the port the Web build should listen on, and the
  * experimental switch that boots that Web build over the Desktop profile
@@ -9,17 +9,17 @@
  * through `configForms`, so persistence, validation and secret handling stay
  * with the Harness and this file only draws the two controls.
  *
- * @module dsh-desktop-autoweb/client
+ * @module dsh-desktop-web/client
  */
 
 window.__ModuleLoader__.load({
-	id: 'dsh-desktop-autoweb',
+	id: 'dsh-desktop-web',
 	factory(require) {
 		const React = require('react')
 		const h = React.createElement
 
 		/** Locale namespace and the Loader entry id this page edits. */
-		const NS = 'dsh-desktop-autoweb'
+		const NS = 'dsh-desktop-web'
 		const ENTRY_ID = 'desktop-autoweb'
 
 		const zh = {
@@ -254,7 +254,7 @@ window.__ModuleLoader__.load({
 		}
 
 		return {
-			name: 'dsh-desktop-autoweb-client',
+			name: 'dsh-desktop-web-client',
 			inject: ['slots', 'locale'],
 
 			apply(ctx) {
@@ -276,7 +276,7 @@ window.__ModuleLoader__.load({
 					order: 120,
 					label: () => translate(locale(), 'section'),
 					inject: () => ({ form, t: (key) => translate(locale(), key) }),
-				}, Section)), 'dsh-desktop-autoweb: settings page')
+				}, Section)), 'dsh-desktop-web: settings page')
 			},
 		}
 	},

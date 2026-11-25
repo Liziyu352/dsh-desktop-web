@@ -1,35 +1,33 @@
 # dsh-desktop-web
 
-A minimal [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) plugin:
-**at Desktop startup, it launches `dsh web` — exactly the command you would type
-by hand — and records the authenticated URL that command prints.** It ships a
-settings page for the port and for an experimental switch that makes the Web GUI
-run over the Desktop profile.
+一个极简的 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) 插件：
+**在桌面端启动时运行一次 `dsh web` —— 就是你手敲的那条命令 —— 并把该命令打印出来的带鉴权 URL 记录下来。**
+此外它还提供一个设置页，可以配置端口，以及一个让 Web 端共享桌面端 Profile 的实验性开关。
 
-One host file (`index.js`), one browser file (`client.js`), zero dependencies,
-zero build step.
+宿主侧一个文件（`index.js`），浏览器侧一个文件（`client.js`），零依赖、零构建。
 
 ```
-Desktop app starts
+桌面端启动
         │
         ▼
-  profileContext.name === 'desktop' ?
-        │ yes
+  profileContext.name === 'desktop' ？
+        │ 是
         ▼
   spawn ── DeepSeek Harness.exe --expose-internals …/dsh-desktop-host/lib/cli.js web --port 0
-        │                                   (or: --profile desktop-shared --patch …)
-        ▼
-  child prints  "dsh web: http://127.0.0.1:64961/?token=…"
+        │                                   （或：--profile desktop-shared --patch …）
         │
         ▼
-  plugin writes  $DSH_HOME/desktop-autoweb.url
+  子进程输出  "dsh web: http://127.0.0.1:64961/?token=…"
+        │
+        ▼
+  插件写入  $DSH_HOME/desktop-autoweb.url
 ```
 
 ---
 
-## Why a child process is required
+## 为什么必须是子进程
 
-`dsh web` is not a library function; it is a **process launch**:
+`dsh web` 不是一个可以在当前进程里调用的函数，它本身就是**启动一个进程**：
 
 ```
 dsh web
@@ -38,58 +36,54 @@ dsh web
   → runProfile({ profile: "web", … })
 ```
 
-Three hard constraints make an in-process switch impossible:
+三条硬约束决定了无法“就地变成网页版”：
 
-| Constraint | Detail |
+| 约束 | 具体表现 |
 | --- | --- |
-| One profile per process | `profileContext.name` is `provide()`d once by `profile-boot` and never changes. The Desktop host is `desktop`, permanently. |
-| Startup-injected config | The host's port, host, TLS and patch layers are fixed at boot (`--no-open --host 127.0.0.1 --port 0`). |
-| Different content | The Desktop window already serves a page at `127.0.0.1:60415` — but that is the **`desktop`** profile (dshmarket, sidebar, pet, workbuddy …). `dsh web` serves the clean **`web`** profile (`dsh-base` + `dsh-web-app` only). Two profiles ⇒ two processes. |
+| 一个进程只能有一个 profile | `profileContext.name` 由 `profile-boot` 在启动时 `provide()` 一次，之后不再改变。桌面宿主永远是 `desktop`。 |
+| 端口与配置在启动时注入 | 宿主自己的端口、host、TLS、patch 层都在 boot 时定死（`--no-open --host 127.0.0.1 --port 0`）。 |
+| 提供的内容不同 | 桌面端窗口已经在 `127.0.0.1:60415` 提供服务了，但那是 **`desktop`** profile（带 dshmarket、侧边栏、桌宠、workbuddy 等）。`dsh web` 提供的是干净的 **`web`** profile（只有 `dsh-base` + `dsh-web-app`）。两个 profile ⇒ 两个进程。 |
 
-So the plugin does not "write an HTTP server". It runs the same CLI the shim
-runs, with the same binary and the same entry point.
+所以插件并没有“自己写一个 HTTP 服务”，它跑的就是 shim 跑的那条 CLI，同一个可执行文件、同一个入口。
 
 ---
 
-## How it works, step by step
+## 工作流程
 
-`index.js` exports a Cordis plugin (`name`, `inject`, `apply`). Its patch layer
-inserts one row into the profile:
+`index.js` 导出一个 Cordis 插件（`name`、`inject`、`apply`）。它的 patch 层往 profile 里插入一行：
 
 ```yaml
 # cordis.patch.yml
 - insert:
     - id: desktop-autoweb
-      name: 'dsh-desktop-web'
+      name: '@liziyu352/dsh-desktop-web'
       config:
         openBrowser: true
         port: 0
         sharedProfile: false
 ```
 
-### 1. Detect the Desktop side
+### 1. 判定是否为桌面端
 
 ```js
 const profile = ctx.get('profileContext')
 if (profile?.name !== 'desktop') return
 ```
 
-This is the **same idiom DeepSeek Harness itself uses** in
-`@deepseek-ai/dsh-web-app/cordis.patch.yml:303`:
+这是 **DeepSeek Harness 自己就在用的写法**，见
+`@deepseek-ai/dsh-web-app/cordis.patch.yml:303`：
 
 ```yaml
 disabled: !!js "ctx.get('profileContext')?.name !== 'desktop' || !process.env.DSH_PRIMARY_RUNTIME"
 ```
 
-Under any other profile — including `web`, the profile the child boots — the row
-returns immediately, so no spawn chain can form.
+任何其它 profile —— 包括子进程自己要启动的 `web` —— 在这里就直接返回，因此不可能形成套娃。
 
-### 2. Guard against a nested spawn
+### 2. 防止嵌套启动
 
-The child inherits `DSH_DESKTOP_AUTOWEB_CHILD=1`, and the row bails out if it
-sees that marker. Belt and braces on top of step 1.
+子进程会带上 `DSH_DESKTOP_AUTOWEB_CHILD=1`，插件一旦看到这个标记也直接返回。这是在步骤 1 之外的第二道保险。
 
-### 3. Spawn exactly what `dsh web` does
+### 3. 启动与 `dsh web` 完全相同的命令
 
 ```js
 const args = ['--expose-internals', desktopCliPath()]
@@ -105,15 +99,14 @@ spawn(process.execPath, args, {
 })
 ```
 
-`desktopCliPath()` resolves `…/@deepseek-ai/dsh-desktop-host/lib/cli.js` from
-`$DSH_INSTALL_DIR` (or, failing that, from
-`dirname(process.execPath)/resources/app.asar/dsh/node_modules/@deepseek-ai/dsh`).
+`desktopCliPath()` 从 `$DSH_INSTALL_DIR` 解析出
+`…/@deepseek-ai/dsh-desktop-host/lib/cli.js`；没有该变量时回退到
+`dirname(process.execPath)/resources/app.asar/dsh/node_modules/@deepseek-ai/dsh`。
 
-### 4. Give the child a clean environment
+### 4. 给子进程一个干净的环境
 
-The child must boot the **`web`** profile, not inherit the parent's `desktop`
-identity. So every `DSH_*` variable is dropped — except `DSH_HOME`, which only
-says where the profile tree lives:
+子进程必须启动 **`web`** profile，不能继承父进程的 `desktop` 身份。因此所有 `DSH_*` 变量都被剔除，
+只保留 `DSH_HOME` —— 它只说明 profile 树在哪里，不说明当前是谁：
 
 ```js
 for (const [key, value] of Object.entries(process.env)) {
@@ -125,49 +118,47 @@ environment.ELECTRON_RUN_AS_NODE = '1'
 environment[CHILD_MARK] = '1'
 ```
 
-This mirrors `scrubbedParentEnv()` in `@deepseek-ai/dsh-subprocess`.
+这与 `@deepseek-ai/dsh-subprocess` 里的 `scrubbedParentEnv()` 是同一套策略。
 
-### 5. Parse the URL and persist it
+### 5. 解析 URL 并落盘
 
-`@deepseek-ai/dsh-web-app` prints one line when its `printUrl` option is on
-(default `true`):
+`@deepseek-ai/dsh-web-app` 在 `printUrl` 打开时（默认 `true`）会打印一行：
 
 ```
 dsh web: http://127.0.0.1:64961/?token=hGFrn1-…
 ```
 
-The plugin line-buffers both `stdout` and `stderr`, matches
-`/^dsh web: (\S+)$/u`, logs it, and writes it to:
+插件对 `stdout` 和 `stderr` 都做行缓冲，用 `/^dsh web: (\S+)$/u` 匹配，打印到日志，
+并写入：
 
 ```
 $DSH_HOME/desktop-autoweb.url
 ```
 
-**The file matters.** On Windows the Electron GUI host's stdout is not visible
-to the user and is not logged anywhere, so a bare `console.log` would leave a
-running server nobody can reach.
+**这一步是必需的**：Windows 上 Electron GUI 宿主的 stdout 用户根本看不到，也不会写进任何日志文件，
+只 `console.log` 的话，服务器起来了但没人能访问。
 
-### 6. One server per process — not per plugin load
+### 6. 每个进程一个服务器，而不是每次插件加载一个
 
 ```js
 const RUNTIME = Symbol.for('dsh-desktop-web.runtime')
 const state = globalThis[RUNTIME] ?? (globalThis[RUNTIME] = { child: undefined, … })
 ```
 
-State lives on `globalThis`, not on a module variable, because Cordis disposes
-and re-evaluates the module on every HMR reload. A web server's lifetime is the
-**process**, so a reload must neither kill it nor start a second one.
+状态放在 `globalThis` 而不是模块级变量，因为 Cordis 每次 HMR 重载都会销毁并重新求值模块。
+Web 服务器的生命周期是**进程**，所以重载既不能杀掉它，也不能再起一个。
 
-### 7. Clear the stale URL
+> 早期版本把 spawn 放在 `ctx.effect(...)` 里，结果每次重载 disposer 都杀服务器、下次加载再起一个新的，
+> 出现了多个重复的 `dsh web` 子进程。这就是改成 `globalThis` 的原因。
 
-At startup the plugin deletes any leftover `desktop-autoweb.url`, so a URL from
-a previous run never points at a server that no longer exists.
+### 7. 清理过期的 URL
 
-### 8. React to settings without a restart
+启动时先删掉上一次留下的 `desktop-autoweb.url`，避免文件里的 URL 指向一个已经不存在的服务器。
 
-`port` and `sharedProfile` are declared `.volatile()`, so a settings edit
-commits into the running references and the Loader emits
-`loader/volatile-update` instead of restarting the plugin:
+### 8. 改设置不重启插件
+
+`port` 与 `sharedProfile` 声明为 `.volatile()`，设置页的改动会直接写进运行中的引用，
+Loader 只发出 `loader/volatile-update`，不会重启插件：
 
 ```js
 ctx.on('loader/volatile-update', () => {
@@ -177,16 +168,14 @@ ctx.on('loader/volatile-update', () => {
 })
 ```
 
-`openBrowser` stays an ordinary field: changing it is meant to restart the row.
-Because one process can only serve one profile, flipping `sharedProfile` **must**
-replace the child — there is no in-place migration.
+`openBrowser` 是普通字段，改它就是要重启这一行。由于一个进程只能服务一个 profile，
+切换 `sharedProfile` **必须**换掉子进程 —— 没有原地迁移这回事。
 
-### 9. Reap a child left by an older release
+### 9. 回收旧版本留下的子进程
 
-HMR swaps the module but runs no disposer for a plain `apply`, so a file
-upgraded while the app is running inherits the process without the old child's
-handle — and that orphan still holds its port. `apply` therefore looks for the
-key the previous release used and kills what it finds:
+HMR 会替换模块，但对普通的 `apply` 不会调用 disposer；于是应用运行期间升级的文件，
+继承了进程却拿不到旧子进程的句柄 —— 那个孤儿还占着端口。因此 `apply` 会先去查上一个版本
+用过的键，把找到的进程杀掉：
 
 ```js
 const LEGACY_OWNED = Symbol.for('dsh-desktop-web.owned')
@@ -200,159 +189,142 @@ function reapLegacyChild() {
 
 ---
 
-## Settings page
+## 设置页
 
-`client.js` registers one `settings.section` entry (nav id `dsh-desktop-web`,
-order `120`). It reads and writes the plugin's own Config through the host's
-`configForms` service, addressed by the Loader **entry id** (`desktop-autoweb`),
-which is what DSH calls a settings namespace — not the package name.
+`client.js` 注册一个 `settings.section` 条目（导航 id 为 `dsh-desktop-web`，`order` 为 `120`）。
+它通过宿主的 `configForms` 服务读写本插件自己的 Config，寻址用的是 Loader **条目 id**
+（`desktop-autoweb`）—— 也就是 DSH 说的设置命名空间，不是包名。
 
 ```
-settings.section  ── Account
-                  ── General
+settings.section  ── 账户
+                  ── 通用
                      …
-                  ── Desktop Auto-Web      ← this page
-                       Web build port   [ 0 ]  Save
+                  ── 桌面端自动启动网页版      ← 本页
+                       网页版端口   [ 0 ]  保存
                        ──────────────────────
-                       Share Desktop plugins and configuration  [ off ]
+                       让网页版共享桌面端的插件和配置    [ 关 ]
                        实验性功能
                        尽管绝大多数插件都是 Web/Desktop 全兼容，但谁都无法保证某个
                        插件是 Desktop-only(例如 dsh-wallpaper-engine)，所以请三思而后行
 ```
 
-Both halves must agree on the bare package name: `dsh-client-modules` attaches a
-package's browser half only to the Loader row whose specifier **is** the bare
-package name, which the patch layer already does.
+两侧必须以裸包名对齐：`dsh-client-modules` 只会把包的浏览器半侧挂到说明符**就是**裸包名的那一行上，
+而 patch 层插的正是这一行。
 
 ---
 
-## Experimental: share the Desktop profile with the Web build
+## 实验性功能：让 Web 端共享桌面端 Profile
 
-Turning `sharedProfile` on makes the Web server boot **the Desktop profile** for
-itself, so the page in your browser carries every plugin and every setting the
-Desktop app has. Nothing is copied and nothing is duplicated.
+打开 `sharedProfile` 后，Web 服务器会为它自己启动**桌面端 Profile**，
+于是浏览器里的页面带着桌面端所有的插件与设置。不复制、不迁移。
 
 > [!WARNING]
 > 尽管绝大多数插件都是 Web/Desktop 全兼容，但谁都无法保证某个插件是
 > Desktop-only(例如 dsh-wallpaper-engine)，所以请三思而后行
->
-> While the vast majority of plugins are fully Web/Desktop compatible, nobody can
-> guarantee that a particular plugin is not Desktop-only (for example
-> `dsh-wallpaper-engine`), so think twice before enabling this.
 
-### How it works
+### 原理
 
-`--profile desktop` is rejected outright:
+`--profile desktop` 会被直接拒绝：
 
 ```
 error: profile "desktop" is managed exclusively by the Electron application
 ```
 
-So the plugin registers a **second profile name** that resolves to the same
-directory — a directory junction:
+于是插件注册了**第二个 profile 名**，指向同一个目录 —— 一个目录联接（junction）：
 
 ```
 $DSH_HOME/profiles/desktop-shared  ──junction──▶  $DSH_HOME/profiles/desktop
 ```
 
-and boots that. Only the junction's name differs; the bundles, the
-`node_modules` and every plugin row are the Desktop ones.
+再用它启动。只有联接的名字不同；bundle 列表、`node_modules`、每一个插件行都是桌面端的那一份。
 
-Two Desktop rows assume the Electron carrier, so the child receives a corrective
-overlay (`$DSH_HOME/desktop-autoweb.shared.yml`) written on every start:
+桌面端有两行假定自己被 Electron 宿主托着，所以子进程会收到一份每次启动都重写的修正 overlay
+（`$DSH_HOME/desktop-autoweb.shared.yml`）：
 
 ```yaml
 - id: webserver
   config:
-    host: '127.0.0.1'          # dsh-web-lan-access sets 0.0.0.0, which the server refuses
-    port: !!js ctx.webStartup?.port ?? 3080   # a config override replaces the whole row
+    host: '127.0.0.1'          # dsh-web-lan-access 会写 0.0.0.0，服务器直接拒绝
+    port: !!js ctx.webStartup?.port ?? 3080   # 覆盖 config 会替换整行，必须补全
     compression: gzip
     compressionLevel: 1
     compressionThresholdBytes: 1024
 - id: connection
   config:
-    trustedHosts: ['127.0.0.1', 'localhost']  # the Desktop value reads ctx.webRuntime, absent here
+    trustedHosts: ['127.0.0.1', 'localhost']  # 桌面端的值读 ctx.webRuntime，这里没有
 ```
 
-Without it the child dies with
-`webserver: host "0.0.0.0" is an unspecified (wildcard) address…` and
-`cannot get property "webRuntime" without inject`.
+没有它，子进程会以
+`webserver: host "0.0.0.0" is an unspecified (wildcard) address…` 和
+`cannot get property "webRuntime" without inject` 失败。
 
-If the junction cannot be prepared, the plugin logs
-`desktop-autoweb: not sharing the Desktop profile: …` and silently falls back to
-the plain `web` profile — the Desktop app keeps working either way.
+如果联接准备失败，插件会打印 `desktop-autoweb: not sharing the Desktop profile: …`
+并静默退回普通 `web` profile —— 两种情况下桌面端本身都照常工作。
 
 ---
 
-## The URL needs its token
+## URL 必须带 token
 
-DSH's web surface is authenticated. `@deepseek-ai/dsh-client-connection`
-exchanges `?token=<launch token>` for a signed cookie and redirects; without it
-the page answers **401** with `dsh web authentication required; reopen the URL
-printed by dsh web.`
+DSH 的 Web 界面是带鉴权的。`@deepseek-ai/dsh-client-connection` 会用 `?token=<launch token>`
+换取签名 cookie 再跳转；不带 token 时页面返回 **401**，正文是
+`dsh web authentication required; reopen the URL printed by dsh web.`
 
-Verified against a live instance:
+实测（对接真实实例）：
 
 ```
-with token     → 303
-without token  → 401
+带 token      → 303
+不带 token    → 401
 ```
 
-So use the URL from `$DSH_HOME/desktop-autoweb.url`, bookmark it, or let
-`openBrowser` open it for you.
+所以请使用 `$DSH_HOME/desktop-autoweb.url` 里的完整 URL，或让它自动打开浏览器。
 
 ---
 
-## Install
+## 安装
 
-### Inside DeepSeek Harness (recommended)
+### 在 DeepSeek Harness 里（推荐）
 
-Ask the agent to install the bundle, or use **Plugins → Add plugin** and point
-it at this directory. Under the hood that is:
+让 agent 安装该 bundle，或用 **插件 → 添加插件** 指到本目录。底层等价于：
 
 ```
-plugin_manager  action: install_bundle  target: <absolute path to this folder>
+plugin_manager  action: install_bundle  target: <本目录的绝对路径>
 ```
 
-Confirmed result:
+已确认的返回：
 
 ```json
 { "stage": "enable", "enabled": true, "changed": true, "application": "applied" }
 ```
 
-The profile's `package.json` then carries the link dependency and the bundle is
-added to `dsh.profile.bundles`. Installing a new bundle activates through HMR;
-a reload runs `apply` again, which is exactly why the guards in steps 1–6 exist.
+之后 profile 的 `package.json` 会带上 link 依赖，`dsh.profile.bundles` 里也会出现它。
+新 bundle 通过 HMR 即可生效；重载会再次执行 `apply`，步骤 1–6 的那些防护正是为此存在。
 
-### Manual
+### 手动
 
-The CLI can also manage the profile directly — the Desktop-managed `desktop`
-profile is accepted when invoked through the Desktop host wrapper:
+CLI 也能直接管理 profile —— 通过桌面端宿主包装器调用时，`desktop` profile 是被允许的：
 
 ```
-dsh plugin --profile desktop add <path-to-this-folder>
+dsh plugin --profile desktop add <本目录路径>
 ```
 
 ---
 
-## Configuration
+## 配置
 
-| Key | Default | Meaning |
+| 键 | 默认值 | 含义 |
 | --- | --- | --- |
-| `openBrowser` | `true` | Open the authenticated URL in the default browser, like a hand-run `dsh web`. Set `false` to only record the URL. |
-| `port` | `0` | `0` picks a free port. A number pins one. Editable from the settings page. |
-| `sharedProfile` | `false` | Experimental — boot the Web build over the Desktop profile. Editable from the settings page. |
+| `openBrowser` | `true` | 用默认浏览器打开带鉴权的 URL，与手敲 `dsh web` 一致。设 `false` 则只记录 URL。 |
+| `port` | `0` | `0` 表示自动选空闲端口；写数字则固定端口。可在设置页修改。 |
+| `sharedProfile` | `false` | 实验性 —— 让 Web 端启动在桌面端 Profile 上。可在设置页修改。 |
 
-`port` and `sharedProfile` are volatile, so the settings page writes them
-without restarting the plugin; `openBrowser` restarts the row.
+`port` 与 `sharedProfile` 是 volatile 字段，设置页写入时不会重启插件；`openBrowser` 会重启该行。
 
-Edit them in the bundle's `cordis.patch.yml`, or through **Plugins** or the
-plugin's own settings page in the GUI.
+在本 bundle 的 `cordis.patch.yml` 里改，或通过 GUI 的 **插件** 页、以及插件自己的设置页改。
 
 ```yaml
 - insert:
     - id: desktop-autoweb
-      name: 'dsh-desktop-web'
+      name: '@liziyu352/dsh-desktop-web'
       config:
         openBrowser: false
         port: 3080
@@ -361,41 +333,39 @@ plugin's own settings page in the GUI.
 
 ---
 
-## Requirements
+## 依赖条件
 
-- DeepSeek Harness **Desktop** (the plugin is inert under any other profile).
-- `$DSH_INSTALL_DIR`, or a standard install layout, to locate
-  `dsh-desktop-host/lib/cli.js`.
-- Node ≥ 20 for the plugin module itself (the Desktop host already ships one).
-
----
-
-## Turning it off
-
-Disable the bundle. The extra Web server stops; the Desktop window and its own
-GUI (`http://127.0.0.1:60415` in a typical run) are unaffected — they were never
-the same process.
+- DeepSeek Harness **桌面端**（其它 profile 下插件完全不动作）。
+- `$DSH_INSTALL_DIR`，或标准安装目录结构，用于定位 `dsh-desktop-host/lib/cli.js`。
+- 插件模块本身需要 Node ≥ 20（桌面端宿主已自带）。
 
 ---
 
-## Repository layout
+## 关闭
+
+禁用该 bundle 即可。额外的 Web 服务器会停止；桌面端窗口和它自己的 GUI
+（按当前运行情况是 `http://127.0.0.1:60415`）不受影响 —— 它们本来就不是同一个进程。
+
+---
+
+## 目录结构
 
 ```
 dsh-desktop-web/
-├── package.json          # bundle manifest: dsh.bundle.patch, dsh.client, exports
-├── cordis.patch.yml      # inserts the `desktop-autoweb` row with its config
-├── index.js              # host half: spawns the Web build
-├── client.js             # browser half: the settings page
-├── icon.svg              # ≤256 KiB, listed in `files` and `exports`
+├── package.json          # bundle 清单：dsh.bundle.patch、dsh.client、exports、files
+├── cordis.patch.yml      # 插入 `desktop-autoweb` 行及其配置
+├── index.js              # 宿主侧：启动 Web 构建
+├── client.js             # 浏览器侧：设置页
+├── icon.svg              # ≤256 KiB，已在 files 与 exports 中声明
 ├── locale/
-│   ├── en.json           # meta.title / meta.description shown in Plugins
+│   ├── en.json           # 插件页显示的 meta.title / meta.description
 │   └── zh.json
-├── README.md             # this file
-├── README-zh-cn.md       # Chinese version of this file
+├── README.md             # 本文件
+├── README-en-us.md       # 英文说明
 ├── LICENSE               # MIT
 └── .gitignore
 ```
 
-## License
+## 许可证
 
 MIT
